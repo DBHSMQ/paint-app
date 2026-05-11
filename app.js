@@ -1,25 +1,14 @@
 // ====================================================
-//  Лента + Paint  —  основной модуль
+//  Лента + Paint  —  Supabase backend
 // ====================================================
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import {
-  getFirestore, collection, addDoc, query, orderBy, limit,
-  onSnapshot, serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import {
-  getStorage, ref, uploadBytes, getDownloadURL
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// ---------- Firebase init ----------
-const cfg = window.FIREBASE_CONFIG || {};
-const firebaseReady = cfg && cfg.apiKey && !cfg.apiKey.startsWith("YOUR_");
-
-let db = null, storage = null;
-if (firebaseReady) {
-  const app = initializeApp(cfg);
-  db = getFirestore(app);
-  storage = getStorage(app);
-}
+// ---------- Supabase init ----------
+const cfg = window.SUPABASE_CONFIG || {};
+const supaReady = cfg && cfg.url && cfg.anonKey && !cfg.url.includes("YOUR_");
+const supabase = supaReady ? createClient(cfg.url, cfg.anonKey) : null;
+const TABLE = cfg.table || "posts";
+const BUCKET = cfg.bucket || "post-images";
 
 // ---------- DOM ----------
 const $ = (id) => document.getElementById(id);
@@ -39,10 +28,7 @@ const paintModal = $("paint-modal");
 const lightbox = $("lightbox");
 const lightboxImg = $("lightbox-img");
 
-// State
 let currentAttachment = null; // { dataUrl, kind: 'drawing'|'photo' }
-
-// Restore name from previous session (in-memory only, no storage available cross-session)
 
 // ---------- Helpers ----------
 function setStatus(msg, type = "") {
@@ -73,18 +59,16 @@ function escapeHTML(s) {
 
 function renderPost(p) {
   const author = p.author || "Аноним";
-  const created = p.createdAt && p.createdAt.toDate ? p.createdAt.toDate() : null;
+  const created = p.created_at ? new Date(p.created_at) : null;
   const badge =
     p.kind === "drawing" ? '<span class="post-badge">🎨 Рисунок</span>' :
     p.kind === "photo"   ? '<span class="post-badge">📷 Фото</span>' : "";
-
-  const img = p.imageUrl
-    ? `<img class="post-image" src="${escapeHTML(p.imageUrl)}" alt="Вложение" loading="lazy" data-lightbox />`
+  const img = p.image_url
+    ? `<img class="post-image" src="${escapeHTML(p.image_url)}" alt="Вложение" loading="lazy" data-lightbox />`
     : "";
   const text = p.text
     ? `<p class="post-text">${escapeHTML(p.text)}</p>`
     : "";
-
   return `
     <article class="post">
       <header class="post-header">
@@ -115,42 +99,49 @@ function renderFeed(posts) {
   });
 }
 
-// ---------- Firestore subscription ----------
-function subscribeFeed() {
-  if (!firebaseReady) {
-    loadingEl.innerHTML =
-      'Firebase ещё не подключён.<br>' +
-      'Откройте <code>firebase-config.js</code> и вставьте ваш конфиг.<br>' +
-      'Инструкция в <a href="https://github.com/DBHSMQ/paint-app#подключение-firebase" target="_blank">README</a>.';
+// ---------- Load + realtime ----------
+async function loadFeed() {
+  if (!supaReady) {
+    loadingEl.innerHTML = "Supabase не подключён. Проверьте supabase-config.js.";
     return;
   }
-  const q = query(collection(db, "posts"), orderBy("createdAt", "desc"), limit(100));
-  onSnapshot(q, (snap) => {
-    const posts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    renderFeed(posts);
-  }, (err) => {
-    console.error(err);
-    feedEl.innerHTML = `<div class="feed-empty">Ошибка загрузки: ${escapeHTML(err.message)}</div>`;
-  });
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) {
+    feedEl.innerHTML = `<div class="feed-empty">Ошибка загрузки: ${escapeHTML(error.message)}</div>`;
+    return;
+  }
+  renderFeed(data || []);
 }
 
-// ---------- Attachment handling ----------
+function subscribeRealtime() {
+  if (!supaReady) return;
+  supabase
+    .channel("posts-feed")
+    .on("postgres_changes",
+      { event: "INSERT", schema: "public", table: TABLE },
+      () => loadFeed()
+    )
+    .subscribe();
+}
+
+// ---------- Attachment ----------
 function showAttachment(dataUrl, kind) {
   currentAttachment = { dataUrl, kind };
   attachImg.src = dataUrl;
   attachPreview.classList.remove("hidden");
 }
-
 function clearAttachment() {
   currentAttachment = null;
   attachImg.src = "";
   attachPreview.classList.add("hidden");
   photoInput.value = "";
 }
-
 removeAttachmentBtn.addEventListener("click", clearAttachment);
 
-// Photo upload
 uploadBtn.addEventListener("click", () => photoInput.click());
 photoInput.addEventListener("change", async () => {
   const file = photoInput.files && photoInput.files[0];
@@ -159,12 +150,11 @@ photoInput.addEventListener("change", async () => {
     setStatus("Можно загружать только изображения.", "error");
     return;
   }
-  // Resize to max 1600px wide to keep upload fast
   try {
     const dataUrl = await resizeImage(file, 1600);
     showAttachment(dataUrl, "photo");
     setStatus("");
-  } catch (e) {
+  } catch {
     setStatus("Не удалось обработать изображение.", "error");
   }
 });
@@ -191,15 +181,15 @@ function resizeImage(file, maxSize) {
   });
 }
 
-// ---------- Publish post ----------
+// ---------- Publish ----------
 async function publishPost() {
   const text = textInput.value.trim();
   if (!text && !currentAttachment) {
     setStatus("Напишите что-нибудь или прикрепите изображение.", "error");
     return;
   }
-  if (!firebaseReady) {
-    setStatus("Firebase не подключён — невозможно опубликовать.", "error");
+  if (!supaReady) {
+    setStatus("Supabase не подключён.", "error");
     return;
   }
 
@@ -209,38 +199,38 @@ async function publishPost() {
   try {
     let imageUrl = null;
     if (currentAttachment) {
-      // Upload to Storage
       const blob = await (await fetch(currentAttachment.dataUrl)).blob();
       const ext = currentAttachment.kind === "drawing" ? "png" : "jpg";
       const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-      const storageRef = ref(storage, `posts/${filename}`);
-      await uploadBytes(storageRef, blob);
-      imageUrl = await getDownloadURL(storageRef);
+      const { error: upErr } = await supabase
+        .storage
+        .from(BUCKET)
+        .upload(filename, blob, { contentType: blob.type || `image/${ext}`, upsert: false });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(filename);
+      imageUrl = pub.publicUrl;
     }
 
-    const author = authorInput.value.trim() || "Аноним";
+    const author = (authorInput.value.trim() || "Аноним").slice(0, 60);
     const kind = currentAttachment ? currentAttachment.kind : "text";
 
-    await addDoc(collection(db, "posts"), {
-      author,
-      text,
-      imageUrl,
-      kind,
-      createdAt: serverTimestamp()
-    });
+    const { error } = await supabase
+      .from(TABLE)
+      .insert({ author, text, image_url: imageUrl, kind });
+    if (error) throw error;
 
     textInput.value = "";
     clearAttachment();
     setStatus("Опубликовано", "success");
     setTimeout(() => setStatus(""), 2000);
+    loadFeed();
   } catch (err) {
     console.error(err);
-    setStatus("Ошибка: " + err.message, "error");
+    setStatus("Ошибка: " + (err.message || err), "error");
   } finally {
     submitBtn.disabled = false;
   }
 }
-
 submitBtn.addEventListener("click", publishPost);
 
 // ---------- Paint modal ----------
@@ -255,13 +245,7 @@ const clearBtn = $("clear-btn");
 const attachDrawingBtn = $("attach-drawing");
 const toolButtons = document.querySelectorAll(".tool");
 
-const paintState = {
-  tool: "brush",
-  color: "#111111",
-  size: 6,
-  drawing: false,
-  lastX: 0, lastY: 0,
-};
+const paintState = { tool: "brush", color: "#111111", size: 6, drawing: false, lastX: 0, lastY: 0 };
 
 function resizeCanvas() {
   const wrap = canvas.parentElement;
@@ -286,7 +270,6 @@ function resizeCanvas() {
   if (prev.width > 0 && prev.height > 0) {
     ctx.drawImage(prev, 0, 0, prev.width, prev.height, 0, 0, canvas.width, canvas.height);
   }
-
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -378,15 +361,11 @@ function setSize(v) {
 }
 sizeSlider.addEventListener("input", (e) => setSize(e.target.value));
 
-clearBtn.addEventListener("click", () => {
-  if (confirm("Очистить холст?")) clearCanvas();
-});
+clearBtn.addEventListener("click", () => { if (confirm("Очистить холст?")) clearCanvas(); });
 
-// Open / close modal
 function openPaint() {
   paintModal.classList.remove("hidden");
   document.body.style.overflow = "hidden";
-  // Initialize canvas after the modal becomes visible
   requestAnimationFrame(() => {
     resizeCanvas();
     setColor(paintState.color);
@@ -408,7 +387,6 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// Attach drawing to post
 attachDrawingBtn.addEventListener("click", () => {
   const dataUrl = canvas.toDataURL("image/png");
   showAttachment(dataUrl, "drawing");
@@ -416,10 +394,8 @@ attachDrawingBtn.addEventListener("click", () => {
   closePaint();
 });
 
-// Lightbox close
 lightbox.addEventListener("click", () => lightbox.classList.add("hidden"));
 
-// Resize handler
 let resizeTimer = null;
 window.addEventListener("resize", () => {
   if (paintModal.classList.contains("hidden")) return;
@@ -428,4 +404,5 @@ window.addEventListener("resize", () => {
 });
 
 // ---------- Start ----------
-subscribeFeed();
+loadFeed();
+subscribeRealtime();
