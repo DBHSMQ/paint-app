@@ -425,6 +425,23 @@ async function handleSession(session) {
   loadFeed();
 }
 
+// ---------- Кнопка "Обновить" ----------
+const refreshBtn = $("refresh-btn");
+if (refreshBtn) {
+  refreshBtn.addEventListener("click", async () => {
+    refreshBtn.classList.add("spinning");
+    refreshBtn.disabled = true;
+    try {
+      await loadFeed();
+    } finally {
+      setTimeout(() => {
+        refreshBtn.classList.remove("spinning");
+        refreshBtn.disabled = false;
+      }, 400);
+    }
+  });
+}
+
 if (supaReady) {
   // Сначала грузим ленту сразу, не дожидаясь auth — чтобы посты появились в любом случае
   loadFeed();

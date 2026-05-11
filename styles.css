@@ -67,6 +67,15 @@ button { font: inherit; }
 }
 
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
+.auth-area-inline { display: flex; gap: 8px; align-items: center; }
+.btn-refresh { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; }
+.btn-refresh svg { transition: transform .5s ease; }
+.btn-refresh.spinning svg { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+@media (max-width: 560px) {
+  .btn-refresh-label { display: none; }
+  .btn-refresh { padding: 8px; }
+}
 
 /* ===== Buttons ===== */
 .btn {
