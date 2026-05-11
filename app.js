@@ -426,7 +426,13 @@ async function handleSession(session) {
 }
 
 if (supaReady) {
-  supabase.auth.getSession().then(({ data }) => handleSession(data.session));
+  // Сначала грузим ленту сразу, не дожидаясь auth — чтобы посты появились в любом случае
+  loadFeed();
+  renderAuthArea();
+  // Потом проверяем сессию (с таймаутом, чтобы не зависнуть)
+  const sessionPromise = supabase.auth.getSession();
+  const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve({ data: { session: null } }), 5000));
+  Promise.race([sessionPromise, timeoutPromise]).then(({ data }) => handleSession(data?.session || null));
   supabase.auth.onAuthStateChange((_event, session) => handleSession(session));
 }
 
