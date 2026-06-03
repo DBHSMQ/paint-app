@@ -138,6 +138,7 @@ button { font: inherit; }
 }
 .btn-theme-toggle:hover {
   background: var(--surface-alt);
+  border-color: var(--border-strong);
 }
 
 /* ===== User menu (topbar) ===== */
