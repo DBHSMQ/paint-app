@@ -731,6 +731,29 @@ window.addEventListener("resize", () => {
   resizeTimer = setTimeout(resizeCanvas, 100);
 });
 
+// ---------- Theme toggle ----------
+function toggleTheme() {
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+  const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+  
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('theme', newTheme);
+}
+
+// Restore saved theme on page load
+document.addEventListener('DOMContentLoaded', () => {
+  const savedTheme = localStorage.getItem('theme');
+  if (savedTheme) {
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  }
+});
+
+// Add event listener for theme toggle button
+const themeToggle = document.getElementById('theme-toggle');
+if (themeToggle) {
+  themeToggle.addEventListener('click', toggleTheme);
+}
+
 // ---------- Start ----------
 renderAuthArea();
 loadFeed();
