@@ -6,6 +6,46 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // ---------- Supabase init ----------
 const cfg = window.SUPABASE_CONFIG || {};
 const supaReady = cfg && cfg.url && cfg.anonKey;
+
+// Проверяем локальный токен и сразу чистим, если он битый/протухший — иначе
+// getSession() может зависнуть при попытке refresh токена и лента не загрузится.
+function cleanupStaleAuth() {
+  try {
+    const keysToCheck = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("sb-") && k.endsWith("-auth-token")) {
+        keysToCheck.push(k);
+      }
+    }
+    for (const k of keysToCheck) {
+      try {
+        const raw = localStorage.getItem(k);
+        if (!raw) continue;
+        const parsed = JSON.parse(raw);
+        const exp = parsed?.expires_at; // в секундах
+        const refresh = parsed?.refresh_token;
+        // Если токен уже протух более 7 дней назад — refresh тоже не сработает, чистим.
+        if (exp && (Date.now() / 1000 - exp) > 60 * 60 * 24 * 7) {
+          localStorage.removeItem(k);
+          console.warn("[auth] удалён старый токен:", k);
+        }
+        // Если нет refresh_token — токен битый.
+        if (!refresh) {
+          localStorage.removeItem(k);
+          console.warn("[auth] удалён битый токен:", k);
+        }
+      } catch (e) {
+        // Непарсибельный JSON — точно битый, чистим
+        localStorage.removeItem(k);
+      }
+    }
+  } catch (e) {
+    console.warn("[auth] cleanupStaleAuth failed:", e);
+  }
+}
+cleanupStaleAuth();
+
 const supabase = supaReady ? createClient(cfg.url, cfg.anonKey, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
 }) : null;
